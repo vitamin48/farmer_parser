@@ -7,6 +7,8 @@ import datetime
 import requests
 from pathlib import Path
 from playwright.sync_api import Playwright, sync_playwright, expect
+import json
+from bs4 import BeautifulSoup
 
 
 class bcolors:
@@ -53,6 +55,8 @@ class Farmer:
     context = None
 
     def __init__(self, playwright):
+        self.res_list = []
+        self.res_dict = {'name': None, 'url': None}
         self.catalogs = read_catalogs_from_txt()
         self.playwright_config(playwright=playwright)
 
@@ -85,36 +89,49 @@ class Farmer:
                   f'\n{exp}')
 
     def get_data_by_page(self):
-        pass
+        soup = BeautifulSoup(self.page.content(), 'lxml')
+        # Найти все блоки элементов внутри класса 'list-showcase__element'
+        elements = soup.find('div', class_='list-showcase view-showcase row')
+        for element in elements.find_all('div', class_='js-element'):
+            # Извлечь имя товара
+            name = element.find('div', class_='list-showcase__name').text.strip()
+            # Извлечь ссылку на товар
+            link = element.find('div', class_='list-showcase__name').find('a')['href']
+            link = f'https://opt.mirfermer.ru{link}'
+            data = {'name': name, 'url': link}
+            self.res_list.append(data)
+            with open('out/articles_farmer.txt', 'a') as output:
+                output.write(f'{link}\n')
+            # self.res_dict['name'] = name
+            # self.res_dict['url'] = link
+            # self.res_list.append(self.res_dict)
+            with open('out/data.json', 'w', encoding='utf-8') as json_file:
+                json.dump(self.res_list, json_file, indent=2, ensure_ascii=False)
+            # self.res_dict = {'name': name, 'url': link}
+        print()
 
     def get_arts_by_catalogs(self):
-        max_attempts = 5
         for catalog in self.catalogs:
             print(f'Работаю с каталогом: {catalog}')
-            current_page = 1
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    max_page_number = self.get_number_last_page(catalog)
-                    if current_page == 1:
-                        print('работа с 1 страницей')
+            max_page_number = self.get_number_last_page(catalog)
+            for page_number in range(1, max_page_number + 1):
+                url = f'{catalog}/?PAGEN_4={page_number}'
+                retry_count = 3
+                while retry_count > 0:
+                    try:
+                        self.page.goto(url, timeout=30000)
                         self.get_data_by_page()
-                        current_page += 1
-                        continue
-                    else:
-                        if current_page != max_page_number:
-                            self.page.goto(f'{catalog}/?PAGEN_4={current_page}', timeout=30000)
-                            self.get_data_by_page()
-                            current_page += 1
+                        break
+                    except Exception as exp:
+                        print(f'Ошибка при загрузке страницы {url}: \n{str(exp)}')
+                        retry_count -= 1
+                        if retry_count > 0:
+                            print(f'Повторная попытка ({retry_count} осталось)')
                         else:
-                            print(f'Закончили работу с каталогом {catalog}, последняя страница: {current_page}')
+                            print('Превышено количество попыток.')
                             break
-                except Exception as exp:
-                    print(f'{bcolors.WARNING}Попытка {attempt} из {max_attempts} не удалась. '
-                          f'Страница: {current_page}. Ошибка: {bcolors.ENDC}\n\n{exp}')
-
     def start(self):
         self.get_arts_by_catalogs()
-        print()
 
 
 def main():
@@ -123,7 +140,7 @@ def main():
     try:
         with sync_playwright() as playwright:
             Farmer(playwright=playwright).start()
-        print()
+        print(f'Успешно')
     except Exception as exp:
         print(exp)
         send_logs_to_telegram(message=f'Произошла ошибка!\n\n\n{exp}')
