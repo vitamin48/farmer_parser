@@ -2,7 +2,7 @@
 имеющихся страниц в файл mirfermer_articles.txt с учетом цены или без. Цена доступна только авторизованным пользователям.
 Остатки велики, этим параметром можно пренебречь"""
 
-import time
+from tqdm import tqdm
 import datetime
 import requests
 from pathlib import Path
@@ -84,6 +84,9 @@ class Farmer:
                                   *[int(page_number.inner_text()) for page_number in page_numbers if
                                     page_number.inner_text() and page_number.inner_text().isdigit()])
             return max_page_number
+        except TypeError:
+            print(f'{bcolors.WARNING}В каталоге 1 страница товаров? Лучше перепроверить!{bcolors.ENDC}')
+            return 1
         except Exception as exp:
             print(f'{bcolors.FAIL}Ошибка при попытке получить последнюю страницу в каталоге: {catalog}{bcolors.ENDC}\n'
                   f'\n{exp}')
@@ -108,13 +111,12 @@ class Farmer:
             with open('out/data.json', 'w', encoding='utf-8') as json_file:
                 json.dump(self.res_list, json_file, indent=2, ensure_ascii=False)
             # self.res_dict = {'name': name, 'url': link}
-        print()
 
     def get_arts_by_catalogs(self):
         for catalog in self.catalogs:
             print(f'Работаю с каталогом: {catalog}')
             max_page_number = self.get_number_last_page(catalog)
-            for page_number in range(1, max_page_number + 1):
+            for page_number in tqdm(range(1, max_page_number + 1)):
                 url = f'{catalog}/?PAGEN_4={page_number}'
                 retry_count = 3
                 while retry_count > 0:
@@ -130,6 +132,7 @@ class Farmer:
                         else:
                             print('Превышено количество попыток.')
                             break
+
     def start(self):
         self.get_arts_by_catalogs()
 
