@@ -19,8 +19,10 @@ from bs4 import BeautifulSoup
 import pickle
 import re
 import ast
+import traceback
 
 from farmer_arts import bcolors, send_logs_to_telegram
+from config import LOGIN, PASSW
 
 
 def read_articles_from_txt():
@@ -33,7 +35,7 @@ def read_articles_from_txt():
 def add_bad_req(art, error=''):
     with open('out/articles_with_bad_req.txt', 'a') as output:
         if error == '':
-            output.write(f'{art} + \n')
+            output.write(f'{art}\n')
         else:
             output.write(f'{error}\t{art}\n')
 
@@ -65,6 +67,32 @@ class FarmerData:
         self.page = self.context.new_page()
         self.page.add_init_script(js)
 
+    def authorization(self):
+        """Авторизация"""
+        try:
+            self.page.goto('https://opt.mirfermer.ru/auth/?back_url=/')
+            # Найти элемент USER_LOGIN по селектору
+            input_element_login = self.page.locator('input.required-auth__input[name="USER_LOGIN"]')
+            # Очистить поле ввода (необязательно, но полезно, чтобы избежать предыдущих значений)
+            input_element_login.clear()
+            # Ввести значение из переменной
+            input_element_login.type(LOGIN)
+            # Найти элемент USER_LOGIN по селектору
+            input_element_pass = self.page.locator('input.required-auth__input[name="USER_PASSWORD"]')
+            # Очистить поле ввода
+            input_element_pass.clear()
+            # Ввести значение из переменной
+            input_element_pass.type(PASSW)
+            # Нажимаем на кнопку Войти
+            button = self.page.locator('input.required-auth__button[Value="Войти"]')
+            button.click()
+        except Exception as exp:
+            traceback_str = traceback.format_exc()
+            print(f'{bcolors.FAIL}Ошибка при авторизации!{bcolors.ENDC}\n\n{exp}')
+            print(traceback_str)
+
+        print()
+
     def get_data_by_page(self, art):
         soup = BeautifulSoup(self.page.content(), 'lxml')
         # Удаляем каждый найденный абзац с атрибутом style="display: none"
@@ -90,7 +118,7 @@ class FarmerData:
         for characteristic in characteristics:
             name_ch = characteristic.find('span', class_='c-gruppedprops__prop-name').text
             value = characteristic.find('span', class_='c-gruppedprops__prop-value').text.strip()
-            value = re.sub(r'[^0-9.]', '', value)
+            value = re.sub(r'[^0-9.]', '', value) # регулярка оставляет толкьо
             characteristics_dict[name_ch] = value
         "Находим изображения из JavaScript кода. Из HTML bs4 не ищет."
         img_lst = []
@@ -106,9 +134,20 @@ class FarmerData:
             for product_id, product_images in pictures_data.items():
                 for image_data in product_images:
                     image_url = image_data.get('SRC_ORIGINAL') or image_data.get('SRC')
-                    img_lst.append(image_url)
+                    img_lst.append(f'https://opt.mirfermer.ru{image_url}')
+        "Находим цену"
+        try:
+            price_element = self.page.locator('.c-prices__value.js-prices_pdv_Оптовая')
+            price = price_element.inner_text()
+            price = re.sub(r'[^0-9.]', '', price).rstrip('.')
+        except Exception as exp:
+            print(f'\n{bcolors.WARNING}Не найдена цена у товара:{bcolors.ENDC}\n{art}\n{exp}')
+            add_bad_req(art, 'Не найдена цена у товара:')
+            traceback_str = traceback.format_exc()
+            print(traceback_str)
+            price = 0
         "Формируем результирующий словарь с данными"
-        self.res_dict[code] = {'name': name, 'stock': stock, 'description': description,
+        self.res_dict[code] = {'name': name, 'price': price, 'stock': stock, 'description': description,
                                'characteristics': characteristics_dict,
                                'img_url': img_lst, 'art_url': art}
         write_json(res_dict=self.res_dict)
@@ -124,7 +163,9 @@ class FarmerData:
                     self.get_data_by_page(art)
                     break
                 except Exception as exp:
-                    print(f'{bcolors.WARNING}Ошибка при загрузке страницы {art}: {bcolors.ENDC}\n{str(exp)}')
+                    traceback_str = traceback.format_exc()
+                    print(f'{bcolors.WARNING}Ошибка при загрузке страницы {art}: {bcolors.ENDC}\n{str(exp)}\n\n'
+                          f'{traceback_str}')
                     retry_count -= 1
                     if retry_count > 0:
                         print(f'Повторная попытка ({retry_count} осталось)')
@@ -135,6 +176,7 @@ class FarmerData:
                         break
 
     def start(self):
+        self.authorization()
         self.get_data_from_catalogs()
 
 
@@ -144,10 +186,12 @@ def main():
     try:
         with sync_playwright() as playwright:
             FarmerData(playwright=playwright).start()
-        print(f'Успешно')
+        print(f'{bcolors.OKGREEN}Успешно{bcolors.ENDC}')
     except Exception as exp:
         print(exp)
-        send_logs_to_telegram(message=f'Произошла ошибка!\n\n\n{exp}')
+        traceback_str = traceback.format_exc()
+        print(traceback_str)
+        send_logs_to_telegram(message=f'Произошла ошибка!\n\n\n{exp}\n\n{traceback_str}')
     t2 = datetime.datetime.now()
     print(f'Finish: {t2}, TIME: {t2 - t1}')
     # send_logs_to_telegram(message=f'Finish: {t2}, TIME: {t2 - t1}')
